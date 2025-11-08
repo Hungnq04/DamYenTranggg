@@ -96,7 +96,17 @@
         "three/examples/jsm/geometries/TextGeometry.js": "https://unpkg.com/three@0.152.2/examples/jsm/geometries/TextGeometry.js"
       }
     }
+        // tạo audio object
+let bgAudio = new Audio("https://hungnq04.github.io/DamYenTranggg/music/song.mp3");
+bgAudio.loop = true;
+
+// play khi user click vào trang
+document.body.addEventListener("click", () => {
+    bgAudio.play().catch(e => console.log("Chưa được phép play nhạc:", e));
+}, { once: true });
+
     </script>
+    
 </head>
 
 <body>
