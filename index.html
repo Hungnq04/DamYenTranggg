@@ -24,21 +24,6 @@
     </script>
 
     <style>
-        body::before {
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-image: url('./images/780e75ce-dca8-41d5-9a5c-c1d0b42f5547.jpg');
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            z-index: -1;
-            /* nằm dưới tất cả hiệu ứng 3D */
-        }
-
         .text-white {
             color: white !important;
         }
@@ -107,6 +92,325 @@
         <span>Đang tải dữ liệu...</span>
     </div>
 
+    <script>
+        // --- MODULE QUẢN LÝ ÂM THANH ---
+        const musicManager = {
+            // Properties
+            audio: null,
+            state: 'idle', // idle, loading, ready, playing, paused, muted, error
+            tokenData: null,
+
+            // --- Core Functions ---
+            _setupAudio() {
+                let audioSrc = window.dataLove2Loveloom?.data?.backgroundMusic;
+                if (!audioSrc) { // Nhạc dự phòng cuối cùng
+                    audioSrc = '/storage/musics/CjfFFwHK4iTik1AjrDa33PT3waZm4Bv1qFreni4e.mp3';
+                }
+                this.audio = new Audio(audioSrc);
+                const isCrossOrigin = /^(https?:)?\/\//.test(audioSrc) && new URL(audioSrc).origin !== window.location.origin;
+                if (isCrossOrigin) {
+                    this.audio.crossOrigin = "anonymous";
+                }
+                this.audio.loop = true;
+                this.audio.volume = 0.7;
+                this.attachEventListeners();
+                window.galaxyAudio = this.audio; // Gán vào global để script.js dùng
+                this.updateState('ready'); // Báo rằng nhạc đã sẵn sàng để phát
+            },
+
+            async init() {
+                const musicData = window.dataLove2Loveloom.data;
+                this.updateState('loading'); // Luôn bắt đầu với trạng thái loading
+
+                if (musicData.type_music === 'system') {
+                    this._setupAudio(); // Tạo audio ngay lập tức với nhạc hệ thống
+                } else if (musicData.type_music === 'zing' && musicData.music_id) {
+                    try {
+                        const res = await this.fetchWithAuth(`/get-song?id=${musicData.music_id}`);
+                        if (!res.ok) throw new Error('Response not OK');
+                        const songInfo = await res.json();
+                        const mp3Url = songInfo.stream?.['128'];
+
+                        if (mp3Url) {
+                            window.dataLove2Loveloom.data.backgroundMusic = mp3Url;
+                            this._setupAudio(); // Tạo audio sau khi lấy link Zing thành công
+                        } else {
+                            console.error('Không tìm thấy link MP3 128kbps, dùng nhạc dự phòng.');
+                            this._setupAudio(); // Lỗi -> Dùng nhạc dự phòng
+                        }
+                    } catch (error) {
+                        console.error('Lỗi khi lấy nhạc từ Zing:', error);
+                        this.updateState('error');
+                        this._setupAudio(); // Lỗi -> Dùng nhạc dự phòng
+                    }
+                } else {
+                    this._setupAudio(); // Trường hợp mặc định
+                }
+            },
+
+            play() {
+                // Hàm này giờ chỉ để script.js gọi, đảm bảo nhạc phát khi intro bắt đầu
+                if (this.audio && this.audio.paused) {
+                    // Trả về một Promise để bên ngoài có thể xử lý lỗi
+                    return this.audio.play();
+                }
+                // Nếu nhạc đã phát hoặc không tồn tại, trả về một Promise đã hoàn thành
+                return Promise.resolve();
+            },
+
+            // Hàm mới để bật/tắt nhạc từ nút điều khiển
+            togglePlayback() {
+                if (!this.audio || this.state === 'loading' || this.state === 'error') {
+                    console.warn("Nhạc chưa sẵn sàng hoặc đang lỗi.");
+                    return;
+                }
+
+                // Nếu nhạc đang bị tắt tiếng, ưu tiên bật tiếng trước
+                if (this.audio.muted) {
+                    this.audio.muted = false;
+                }
+
+                // Sau đó mới xử lý play/pause
+                if (this.audio.paused) {
+                    this.audio.play();
+                } else {
+                    this.audio.pause();
+                }
+            },
+
+
+            // --- UI & State Management ---
+            updateState(newState) {
+                this.state = newState;
+                // Chỉ ẩn loader khi không còn loading nữa
+                if (newState !== 'loading') {
+                    const loader = document.getElementById('music-loader');
+                    if (loader) loader.style.display = 'none';
+                }
+                this.updateUI();
+            },
+
+            updateUI() {
+                const audioIcon = document.getElementById('audio-icon');
+                if (!audioIcon) return;
+
+                // Cập nhật icon dựa trên trạng thái paused
+                if (!this.audio || this.audio.paused) {
+                    audioIcon.classList.remove("fa-volume-high");
+                    audioIcon.classList.add("fa-volume-xmark");
+                } else {
+                    audioIcon.classList.remove("fa-volume-xmark");
+                    audioIcon.classList.add("fa-volume-high");
+                }
+            },
+
+            attachEventListeners() {
+                if (!this.audio) return;
+                this.audio.onplay = () => this.updateState('playing');
+                this.audio.onpause = () => this.updateState('paused');
+                this.audio.onvolumechange = () => this.updateUI(); // Cập nhật UI nếu có thay đổi volume
+            },
+
+            // Các hàm fetchWithAuth và getToken giữ nguyên...
+            async getToken() {
+                try {
+                    const res = await fetch('/token-api-mp3');
+                    if (!res.ok) throw new Error('Không lấy được token');
+                    const data = await res.json();
+                    this.tokenData = data;
+                    return this.tokenData;
+                } catch (err) {
+                    console.error('Lỗi lấy token:', err);
+                    return null;
+                }
+            },
+            async fetchWithAuth(url) {
+                await this.getToken();
+
+                if (!this.tokenData) throw new Error('Không có token xác thực');
+
+                const headers = {
+                    'X-Auth-Token': this.tokenData.token,
+                    'X-Auth-Timestamp': this.tokenData.timestamp,
+                    'X-Client-Key': this.tokenData.clientKey,
+                    'X-Auth-Nonce': this.tokenData.nonce,
+                };
+
+                let res = await fetch(url, {
+                    headers
+                });
+
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    console.error(`Lỗi response (${res.status}):`, errorText);
+                    if (res.status === 403) {
+                        await this.getToken();
+                        if (!this.tokenData) throw new Error('Không có token xác thực');
+
+                        const newHeaders = {
+                            'X-Auth-Token': this.tokenData.token,
+                            'X-Auth-Timestamp': this.tokenData.timestamp,
+                            'X-Client-Key': this.tokenData.clientKey,
+                            'X-Auth-Nonce': this.tokenData.nonce,
+                        };
+
+                        res = await fetch(url, {
+                            headers: newHeaders
+                        });
+
+                        if (!res.ok) {
+                            const errText = await res.text();
+                            throw new Error(`Request lỗi sau khi refresh token: ${res.status}`);
+                        }
+                    } else {
+                        throw new Error(`Request lỗi: ${res.status}`);
+                    }
+                }
+
+                return res;
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            window.musicManager = musicManager;
+            musicManager.init();
+
+            const toggleBtn = document.getElementById("toggle-audio");
+            toggleBtn.addEventListener("click", () => musicManager.togglePlayback());
+        });
+
+        // let tokenData = null;
+        // async function getToken() {
+        //     try {
+        //         const res = await fetch('/token-api-mp3');
+        //         if (!res.ok) throw new Error('Không lấy được token');
+        //         const data = await res.json();
+        //         tokenData = data;
+        //         return tokenData;
+        //     } catch (err) {
+        //         console.error('Lỗi lấy token:', err);
+        //         return null;
+        //     }
+        // }
+        // async function fetchWithAuth(url) {
+        //     await getToken();
+        //     if (!tokenData) throw new Error('Không có token xác thực');
+        //     const headers = {
+        //         'X-Auth-Token': tokenData.token,
+        //         'X-Auth-Timestamp': tokenData.timestamp,
+        //         'X-Client-Key': tokenData.clientKey,
+        //         'X-Auth-Nonce': tokenData.nonce,
+        //     };
+
+        //     let res = await fetch(url, {
+        //         headers
+        //     });
+
+        //     if (!res.ok) {
+        //         // Nếu response lỗi, đọc nội dung lỗi và log
+        //         const errorText = await res.text();
+        //         console.error(`Lỗi response (${res.status}):`, errorText);
+        //         if (res.status === 403) {
+        //             await getToken();
+        //             if (!tokenData) throw new Error('Không có token xác thực');
+        //             const newHeaders = {
+        //                 'X-Auth-Token': tokenData.token,
+        //                 'X-Auth-Timestamp': tokenData.timestamp,
+        //                 'X-Client-Key': tokenData.clientKey,
+        //                 'X-Auth-Nonce': tokenData.nonce,
+        //             };
+
+        //             res = await fetch(url, {
+        //                 headers: newHeaders
+        //             });
+
+        //             if (!res.ok) {
+        //                 const errText = await res.text();
+        //                 // console.error(`Lỗi sau khi refresh token (${res.status}):`, errText);
+        //                 throw new Error(`Request lỗi sau khi refresh token: ${res.status}`);
+        //             }
+        //         } else {
+        //             throw new Error(`Request lỗi: ${res.status}`);
+        //         }
+        //     }
+
+        //     return res;
+        // }
+        // document.addEventListener('DOMContentLoaded', function() {
+        //     const toggleBtn = document.getElementById("toggle-audio");
+        //     const audioIcon = document.getElementById("audio-icon");
+
+        //     // Logic lấy nhạc Zing MP3 nếu cần
+        //     const initializeMusic = async () => {
+        //         const musicData = window.dataLove2Loveloom.data;
+        //         if (musicData.type_music === 'zing' && musicData.music_id) {
+        //             try {
+        //                 const res = await fetchWithAuth(`/get-song?id=${musicData.music_id}`);
+        //                 if (!res.ok) throw new Error('Lỗi khi lấy thông tin bài hát');
+        //                 const songInfo = await res.json();
+
+        //                 const mp3Url = songInfo.stream?.['128'];
+        //                 if (mp3Url) {
+        //                     // Cập nhật lại link nhạc trong object global
+        //                     window.dataLove2Loveloom.data.backgroundMusic = mp3Url;
+        //                     document.dispatchEvent(new CustomEvent('zingMusicReady', {
+        //                         detail: {
+        //                             url: mp3Url
+        //                         }
+        //                     }));
+        //                     console.log('Đã cập nhật link nhạc Zing:', mp3Url);
+        //                 } else {
+        //                     console.error('Không tìm thấy link mp3 128kbps từ Zing.');
+        //                 }
+        //             } catch (error) {
+        //                 console.error('Lỗi khi lấy nhạc từ Zing:', error);
+        //             }
+        //         }
+        //     };
+
+        //     // Chạy hàm lấy nhạc Zing ngay khi có thể
+        //     initializeMusic();
+
+        //     // Hàm cập nhật icon
+        //     const updateAudioIcon = () => {
+        //         const audio = window.galaxyAudio; // Tham chiếu đến audio từ script.js
+        //         if (!audio || audio.paused || audio.muted) {
+        //             audioIcon.classList.remove("fa-volume-high");
+        //             audioIcon.classList.add("fa-volume-xmark");
+        //         } else {
+        //             audioIcon.classList.remove("fa-volume-xmark");
+        //             audioIcon.classList.add("fa-volume-high");
+        //         }
+        //     };
+
+        //     // Xử lý sự kiện click vào nút toggle
+        //     toggleBtn.addEventListener("click", () => {
+        //         const audio = window.galaxyAudio;
+        //         if (!audio) {
+        //             console.warn("Vui lòng bắt đầu trải nghiệm để bật/tắt nhạc.");
+        //             return;
+        //         }
+        //         audio.muted = !audio.muted;
+        //         if (audio.paused) {
+        //             audio.play();
+        //         }
+        //         updateAudioIcon();
+        //     });
+
+        //     // Liên tục kiểm tra và gắn listener khi audio được tạo
+        //     setInterval(() => {
+        //         const audio = window.galaxyAudio;
+        //         if (audio && !audio.dataset.listenersAttached) {
+        //             audio.addEventListener('play', updateAudioIcon);
+        //             audio.addEventListener('pause', updateAudioIcon);
+        //             audio.addEventListener('volumechange', updateAudioIcon);
+        //             audio.dataset.listenersAttached = 'true'; // Đánh dấu đã gắn listener
+        //             updateAudioIcon();
+        //         }
+        //     }, 500);
+        // });
+    </script>
+
     <div id="landscape-warning">
         <div class="warning-content">
             <div class="rotate-icon"></div>
@@ -126,15 +430,15 @@
         window.dataLove2Loveloom = {
             "template": "galaxy",
             "data": {
-                "keychain": { "name": "XinhGai", "phone": "XinhGai", "address": "XinhGai" },
+                "keychain": { "name": "Xinh Gái", "phone": "Xinh Gái", "address": "Xinh Gái" },
                 "ringTexts": ["Yến Trang"],
                 "heartImages": [
                     "https://ll2.sonlq162.workers.dev/view/2:AgACAgUAAyEGAASlQ7jMAAEBSLVpDUxvYxRUu9abxXPX7sLuxNp2kAACQQxrG_TbaFT2G8vRqqg2YwEAAwIAA3gAAzYE.jpg",
                     "https://ll.sonlq211.workers.dev/view/0:AgACAgUAAyEGAASkDbQmAAEDstdpDUxt_xaSFgXBDBZgojnqICzwTAACJQxrGyroaFRK1jg5qV50jAEAAwIAA3gAAzYE.jpg"
                 ],
-                "type_music": "zing",
-                "music_id": "Z7B8I8UZ",
-                "backgroundMusic": ""
+                type_music: "custom",
+                music_id: "",
+                backgroundMusic: "https://res.cloudinary.com/dcqx4zcmw/video/upload/v1766598892/C%C3%A1nh_Hoa_H%C3%A9o_T%C3%A0n_Domino_Remix_u6ptzm.mp3"
             },
             "messages": { "click_to_open": "Chạm vào tinh cầu" }
         };
@@ -231,12 +535,12 @@
         // Danh sách hình ảnh trái tim, kết hợp dữ liệu từ subdomain và mặc định
         const heartImages = [
             ...(window.dataLove2Loveloom && window.dataLove2Loveloom.data.heartImages ? window.dataLove2Loveloom.data.heartImages : []),
-            './images/441553038_402483405932609_5398546077958487630_n.jpg',
-            './images/467512802_1374239227294351_7189690944767382567_n.jpg',
-            './images/490502779_18371898355193324_3377586326237842929_n.jpg',
-            './images/531366081_18386107489193324_856199314527721479_n.jpg',
-            './images/561768326_18394026367193324_9190132420477803673_n.jpg',
-            './images/368166594_990070312249559_7287735815588373128_n.jpg'
+            'https://res.cloudinary.com/dcqx4zcmw/image/upload/v1766601998/img6_tpn1c8.jpg',
+            'https://res.cloudinary.com/dcqx4zcmw/image/upload/v1766601997/img5_cdzpjk.jpg',
+            'https://res.cloudinary.com/dcqx4zcmw/image/upload/v1766601995/img4_ma612k.jpg',
+            'https://res.cloudinary.com/dcqx4zcmw/image/upload/v1766601991/img3_kvomvy.jpg',
+            'https://res.cloudinary.com/dcqx4zcmw/image/upload/v1766601986/img2_sezfrg.jpg',
+            'https://res.cloudinary.com/dcqx4zcmw/image/upload/v1766601980/img1_cc6j9i.jpg'
         ];
 
         const textureLoader = new THREE.TextureLoader();
@@ -311,6 +615,7 @@
                 uRippleSpeed: { value: 40.0 },
                 uRippleWidth: { value: 20.0 }
             },
+
             vertexShader: `
         uniform float uSize;
         uniform float uTime;
@@ -321,47 +626,51 @@
         varying vec3 vColor;
 
         void main() {
-            // Lấy màu gốc từ geometry (giống hệt vertexColors: true)
             vColor = color;
 
             vec4 modelPosition = modelMatrix * vec4(position, 1.0);
 
-            // ---- LOGIC HIỆU ỨNG GỢN SÓNG ----
             if (uRippleTime > 0.0) {
                 float rippleRadius = (uTime - uRippleTime) * uRippleSpeed;
                 float particleDist = length(modelPosition.xyz);
 
-                float strength = 1.0 - smoothstep(rippleRadius - uRippleWidth, rippleRadius + uRippleWidth, particleDist);
-                strength *= smoothstep(rippleRadius + uRippleWidth, rippleRadius - uRippleWidth, particleDist);
+                float strength = 1.0 - smoothstep(
+                    rippleRadius - uRippleWidth,
+                    rippleRadius + uRippleWidth,
+                    particleDist
+                );
 
                 if (strength > 0.0) {
-                    vColor += vec3(strength * 2.0); // Làm màu sáng hơn khi sóng đi qua
+                    vColor += vec3(strength * 2.0);
                 }
             }
 
             vec4 viewPosition = viewMatrix * modelPosition;
             gl_Position = projectionMatrix * viewPosition;
-            // Dòng này làm cho các hạt nhỏ hơn khi ở xa, mô phỏng hành vi của PointsMaterial
             gl_PointSize = uSize / -viewPosition.z;
         }
     `,
+
             fragmentShader: `
         varying vec3 vColor;
+
         void main() {
-            // Làm cho các hạt có hình tròn thay vì hình vuông
             float dist = length(gl_PointCoord - vec2(0.5));
             if (dist > 0.5) discard;
 
             gl_FragColor = vec4(vColor, 1.0);
         }
     `,
+
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             transparent: true,
             vertexColors: true
         });
+
         const galaxy = new THREE.Points(galaxyGeometry, galaxyMaterial);
         scene.add(galaxy);
+
 
         function createNeonTexture(image, size) {
             const canvas = document.createElement('canvas');
@@ -515,7 +824,7 @@
         scene.add(ambientLight);
 
         //---- TẠO NỀN SAO (STARFIELD) ----
-        const starCount = 0;
+        const starCount = 20000;
         const starGeometry = new THREE.BufferGeometry();
         const starPositions = new Float32Array(starCount * 3);
         for (let i = 0; i < starCount; i++) {
@@ -758,7 +1067,7 @@
 
         // ---- TẠO CÁC VÒNG CHỮ QUAY QUANH HÀNH TINH ----
         const ringTexts = [
-            'LoveLoom',
+            'Yến Trang',
             ...(window.dataLove2Loveloom && window.dataLove2Loveloom.data.ringTexts ? window.dataLove2Loveloom.data.ringTexts : [])
         ];
 
@@ -1393,6 +1702,40 @@
             }
         }
 
+        // ==== KHỞI TẠO MUSIC MANAGER SỚM ====
+        (function initMusicManager() {
+            const bgMusic = window.dataLove2Loveloom?.data?.backgroundMusic;
+
+            if (!bgMusic) {
+                console.warn("Không có backgroundMusic");
+                return;
+            }
+
+            const audio = new Audio(bgMusic);
+            audio.loop = true;
+            audio.preload = "auto";
+            audio.volume = 0.6;
+
+            window.musicManager = {
+                audio,
+
+                play() {
+                    return audio.play();
+                },
+
+                pause() {
+                    audio.pause();
+                },
+
+                updateUI() {
+                    // cập nhật icon nếu có
+                }
+            };
+
+            console.log("musicManager đã được khởi tạo");
+        })();
+
+
         renderer.domElement.addEventListener('click', onCanvasClick);
 
         animate();
@@ -1455,6 +1798,34 @@
         style="position: absolute; top: 10px; right: 10px; z-index: 999;">
         <i id="audio-icon" class="text-white fa-solid fa-volume-high"></i>
     </button>
+
+    <!-- <script>
+        const toggleBtn = document.getElementById('toggle-audio');
+        const audioIcon = document.getElementById('audio-icon');
+
+        toggleBtn.addEventListener('click', () => {
+            if (!window.musicManager || !window.musicManager.audio) {
+                console.error("musicManager chưa sẵn sàng");
+                return;
+            }
+
+            const audio = window.musicManager.audio;
+
+            if (audio.paused) {
+                audio.muted = false;
+                audio.play();
+
+                audioIcon.classList.remove('fa-volume-xmark');
+                audioIcon.classList.add('fa-volume-high');
+            } else {
+                audio.pause();
+
+                audioIcon.classList.remove('fa-volume-high');
+                audioIcon.classList.add('fa-volume-xmark');
+            }
+        });
+
+    </script> -->
 
     <script defer src="https://static.cloudflareinsights.com/beacon.min.js"
         data-cf-beacon='{"token":"dbcd8856a1a842ceb5c3d63534a9f51d"}' crossorigin="anonymous"></script>
